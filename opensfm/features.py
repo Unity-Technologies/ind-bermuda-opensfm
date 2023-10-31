@@ -8,16 +8,6 @@ import cv2
 import numpy as np
 from opensfm import context, pyfeatures
 
-# CUSTOM CHANGES #1 BEGIN
-# imports for SuperPoint and DISK
-from lightglue import SuperPoint, DISK
-from lightglue.utils import numpy_image_to_torch
-import torch
-import pypopsift
-from nets.aliked import ALIKED
-# CUSTOM CHANGES #1 END
-
-
 logger: logging.Logger = logging.getLogger(__name__)
 
 
@@ -355,6 +345,7 @@ def _in_mask(point: np.ndarray, width: int, height: int, mask: np.ndarray) -> bo
     v = mask.shape[0] * (point[1] + 0.5) / height
     return mask[int(v), int(u)] != 0
 
+
 def extract_features_sift(
     image: np.ndarray, config: Dict[str, Any], features_count: int
 ) -> Tuple[np.ndarray, np.ndarray]:
@@ -562,12 +553,15 @@ def extract_features_orb(
     logger.debug("Found {0} points in {1}s".format(len(points), time.time() - t))
     return points, desc
 
+
 # CUSTOM CHANGES #2 BEGIN
 # Implementation of POPSIFT, SUPERPOINT and DISK
+
 
 def extract_features_popsift(
     image: np.ndarray, config: Dict[str, Any], features_count: int
 ) -> Tuple[np.ndarray, np.ndarray]:
+    import pypopsift
 
     sift_edge_threshold = float(config["sift_edge_threshold"])
     sift_peak_threshold = float(config["sift_peak_threshold"])
@@ -575,33 +569,41 @@ def extract_features_popsift(
 
     logger.debug("Computing sift with threshold {0}".format(sift_peak_threshold))
     t = time.time()
-    points, desc = pypopsift.popsift(image, peak_threshold=sift_peak_threshold,
-                                edge_threshold=sift_edge_threshold,
-                                target_num_features=features_count,
-                                use_root=use_root)
-    
+    points, desc = pypopsift.popsift(
+        image,
+        peak_threshold=sift_peak_threshold,
+        edge_threshold=sift_edge_threshold,
+        target_num_features=features_count,
+        use_root=use_root,
+    )
+
     logger.debug("Found {0} points in {1}s".format(len(points), time.time() - t))
-    return points, desc    
+    return points, desc
+
 
 def extract_features_aliked(
-        image: np.ndarray, config: Dict[str, Any], features_count: int
+    image: np.ndarray, config: Dict[str, Any], features_count: int
 ) -> Tuple[np.ndarray, np.ndarray]:
-    
+    import torch
+    from nets.aliked import ALIKED
+
     if not hasattr(extract_features_aliked, "aliked"):
         logger.debug("Initializing ALIKED...")
         if not torch.cuda.is_available():
             logger.error("ALIKED requires CUDA")
-            raise RuntimeError("SuperPoint requires CUDA")
-        extract_features_aliked.aliked = ALIKED("aliked-n16rot", n_limit = features_count)
+            raise RuntimeError("ALIKED requires CUDA")
+        extract_features_aliked.aliked = ALIKED("aliked-n16rot", n_limit=features_count)
         logger.debug("Compilling ALIKED...")
-        extract_features_aliked.aliked = torch.compile(extract_features_aliked.aliked, mode="reduce-overhead")
+        extract_features_aliked.aliked = torch.compile(
+            extract_features_aliked.aliked, mode="reduce-overhead"
+        )
         logger.debug("Initialized ALIKED.")
 
     logger.debug("Computing ALIKED")
     t = time.time()
-    pred_ref =  extract_features_aliked.aliked.run(image)
-    points = pred_ref['keypoints']
-    desc = pred_ref['descriptors']
+    pred_ref = extract_features_aliked.aliked.run(image)
+    points = pred_ref["keypoints"]
+    desc = pred_ref["descriptors"]
     logger.debug("Found {0} points in {1}s".format(len(points), time.time() - t))
     return points, desc
 
@@ -609,6 +611,10 @@ def extract_features_aliked(
 def extract_features_superpoint(
     image: np.ndarray, config: Dict[str, Any], features_count: int
 ) -> Tuple[np.ndarray, np.ndarray]:
+    import torch
+    from lightglue import SuperPoint
+    from lightglue.utils import numpy_image_to_torch
+
     descriptor_dim = config.get(
         "descriptor_dim", SuperPoint.default_conf["descriptor_dim"]
     )
@@ -619,19 +625,13 @@ def extract_features_superpoint(
 
     if (
         not hasattr(extract_features_superpoint, "superpoint_detector")
-        or extract_features_superpoint.superpoint_detector.conf[
-            "max_num_keypoints"
-        ]
+        or extract_features_superpoint.superpoint_detector.conf["max_num_keypoints"]
         != features_count
-        or extract_features_superpoint.superpoint_detector.conf[
-            "descriptor_dim"
-        ]
+        or extract_features_superpoint.superpoint_detector.conf["descriptor_dim"]
         != descriptor_dim
         or extract_features_superpoint.superpoint_detector.conf["nms_radius"]
         != nms_radius
-        or extract_features_superpoint.superpoint_detector.conf[
-            "detection_threshold"
-        ]
+        or extract_features_superpoint.superpoint_detector.conf["detection_threshold"]
         != detection_threshold
     ):
         logger.debug("Initializing SuperPoint...")
@@ -648,7 +648,9 @@ def extract_features_superpoint(
             .eval()
             .cuda()
         )
-        extract_features_superpoint.superpoint_detector = torch.compile(extract_features_superpoint.superpoint_detector, mode="reduce-overhead")
+        extract_features_superpoint.superpoint_detector = torch.compile(
+            extract_features_superpoint.superpoint_detector, mode="reduce-overhead"
+        )
         logger.debug("Initialized SuperPoint.")
 
     logger.debug("Computing SuperPoint")
@@ -670,6 +672,10 @@ def extract_features_superpoint(
 def extract_features_disk(
     image: np.ndarray, config: Dict[str, Any], features_count: int
 ) -> Tuple[np.ndarray, np.ndarray]:
+    import torch
+    from lightglue import DISK
+    from lightglue.utils import numpy_image_to_torch
+
     desc_dim = config.get("desc_dim", DISK.default_conf["desc_dim"])
     nms_window_size = config.get(
         "nms_window_size", DISK.default_conf["nms_window_size"]
@@ -679,11 +685,9 @@ def extract_features_disk(
     )
     if (
         not hasattr(extract_features_disk, "disk_detector")
-        or extract_features_disk.disk_detector.conf.max_num_keypoints
-        != features_count
+        or extract_features_disk.disk_detector.conf.max_num_keypoints != features_count
         or extract_features_disk.disk_detector.conf.desc_dim != desc_dim
-        or extract_features_disk.disk_detector.conf.nms_window_size
-        != nms_window_size
+        or extract_features_disk.disk_detector.conf.nms_window_size != nms_window_size
         or extract_features_disk.disk_detector.conf.detection_threshold
         != detection_threshold
     ):
@@ -702,7 +706,9 @@ def extract_features_disk(
             .eval()
             .cuda()
         )
-        extract_features_disk.disk_detector = torch.compile(extract_features_disk.disk_detector, mode="reduce-overhead")
+        extract_features_disk.disk_detector = torch.compile(
+            extract_features_disk.disk_detector, mode="reduce-overhead"
+        )
         logger.debug("Initialized DISK.")
 
     logger.debug("Computing DISK")
@@ -716,7 +722,9 @@ def extract_features_disk(
     logger.debug("Found {0} points in {1}s".format(len(points), time.time() - t))
     return points, desc
 
+
 # CUSTOM CHANGES #2 END
+
 
 def extract_features(
     image: np.ndarray, config: Dict[str, Any], is_panorama: bool

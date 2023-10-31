@@ -15,13 +15,6 @@ from opensfm import (
 )
 from opensfm.dataset_base import DataSetBase
 
-# CUSTOM CHANGES #5 BEGIN
-import torch
-import threading
-from lightglue import LightGlue
-
-# CUSTOM CHANGES #5 END
-
 logger: logging.Logger = logging.getLogger(__name__)
 
 
@@ -794,6 +787,9 @@ def match_brute_force_symmetric(
 def match_lightglue(
     d1: np.ndarray, d2: np.ndarray, p1: np.ndarray, p2: np.ndarray, feature_type: str
 ) -> List[Tuple[int, int]]:
+    import torch
+    from lightglue import LightGlue
+
     if (
         not hasattr(match_lightglue, "lightglue")
         or match_lightglue.feature_type != feature_type.lower()
